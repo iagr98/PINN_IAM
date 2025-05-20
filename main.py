@@ -26,8 +26,8 @@ def run_model(F_val, L_val, EIz_val, filename, epochs, capture, strategy=True):
 if __name__ == "__main__":
     
     # Parameter declaration
-    epochs = 10001
-    capture = 100
+    epochs = 100001
+    capture = 1000
     F_val=333.333333333
     L_val =10
     EIz_val = 111.111e6
