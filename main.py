@@ -14,11 +14,11 @@ os.environ['TF_DETERMINISTIC_OPS'] = '1'
 os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
 
-def run_model(F_val, L_val, EIz_val, filename, epochs, capture, strategy=True):
+def run_model(FEI, L_val, delta_max, filename, epochs, capture, strategy=True):
     """
     Run the model with the given parameters.
     """
-    utils = Utils(F_val, L_val, EIz_val)
+    utils = Utils(FEI, L_val, delta_max)
     W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx, x, w_analytic, model, lambdas, losses = utils.train(epochs=epochs, capture=capture, resample=False, strategy=strategy) 
     general_utils.save_results(filename, W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx, x, w_analytic, lambdas, losses)
 
@@ -28,17 +28,11 @@ if __name__ == "__main__":
     # Parameter declaration
     epochs = 100001
     capture = 1000
-    F_val=333.333333333
-    L_val =10
-    EIz_val = 111.111e6
+    FEI = 3
+    L_val = 1
+    delta_max = 1
     
-    # Train the model 1 without strategy
-    filename = "pinn_results_no_strategy"
-    run_model(F_val, L_val, EIz_val, filename, epochs, capture, strategy=False)
+    filename = "pinn_results"
+    run_model(FEI, L_val, delta_max, filename, epochs, capture, strategy=False)
 
-    # Train the model 2 with strategy
-    filename = "pinn_results_strategy"
-    run_model(F_val, L_val, EIz_val, filename, epochs=epochs, capture=capture, strategy=True)
-
-    print("Training of both models completed.")
-        
+    print("Training of model completed.")

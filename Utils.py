@@ -8,10 +8,10 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 
 class Utils:
 
-    def __init__(self, F_val, L_val, EIz_val, num_points=300, n_data=2, num_collocation_points=300, normalize=True):
-        self.F_val = F_val
+    def __init__(self, FEI, L_val, delta_max, num_points=300, n_data=2, num_collocation_points=300, normalize=True):
+        self.FEI = FEI
         self.L_val = L_val
-        self.EIz_val = EIz_val
+        self.delta_max = delta_max
         self.num_points = num_points
         self.n_data = n_data
         self.num_collocation_points = num_collocation_points
@@ -29,8 +29,11 @@ class Utils:
 
     def analytical_solution(self):
         x = sp.symbols('x')
-        u_specific = (1/(self.EIz_val)) * (-((1/6)*self.F_val*x**3)+(0.5*self.F_val*self.L_val*x**2))
-        
+        u_specific = (self.delta_max / self.L_val) * x + (self.FEI) * (
+            - (self.L_val**2 * x / 3)
+            + (self.L_val * x**2 / 2)
+            - (x**3 / 6)
+        )
         u_numeric = sp.lambdify(x, u_specific)
         self.x_vals = np.linspace(0, self.L_val, self.num_points)
         self.u_vals = u_numeric(self.x_vals)
@@ -82,8 +85,8 @@ class Utils:
             xl = tf.cast(x < self.TOL, dtype=tf.float32)
             xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
             b1_loss = tf.reduce_mean((xl * W)**2)
-            b2_loss = tf.reduce_mean((xu * (W - 1e-3))**2)
-            b3_loss = tf.reduce_mean((xl * (dW_dxx - (-self.F_val * self.L_val / self.EIz_val)))**2)
+            b2_loss = tf.reduce_mean((xu * (W - self.delta_max))**2)
+            b3_loss = tf.reduce_mean((xl * (dW_dxx - (self.FEI * self.L_val)))**2)
             b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
             return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
 
@@ -126,7 +129,7 @@ class Utils:
             args['l'+str(i)] = losses[i]
         return grads, f_loss, b_losses, args
     
-    def train(self, nlayers=4, nnodes=360, lr=0.001, epochs=5001, batch_size=1024, resample=True, T=0.1, alpha=0.999, rho=1, patience=4, factor=0.1, capture=1, strategy=True):
+    def train(self, nlayers=5, nnodes=360, lr=0.001, epochs=5001, batch_size=1024, resample=True, T=0.1, alpha=0.999, rho=1, patience=4, factor=0.1, capture=1, strategy=True):
         model = [self.fully_connected(nlayers, nnodes)]
         # print(model[0].layers[1].get_weights()[0][:5])  # First 5 weights of the first layer
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
