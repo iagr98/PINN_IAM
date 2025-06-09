@@ -8,14 +8,11 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 
 class Utils:
 
-    def __init__(self, FEI, L_val, delta_max, num_points=300, n_data=2, num_collocation_points=300, normalize=True):
-        self.FEI = FEI
+    def __init__(self, L_val, delta_max, q, num_points=300):
         self.L_val = L_val
         self.delta_max = delta_max
-        self.num_points = num_points
-        self.n_data = n_data
-        self.num_collocation_points = num_collocation_points
-        self.normalize = normalize
+        self.q = q
+        self.num_points = num_points             
         self.TOL = 1e-5
         self.inverse = False
         self.inverse_var = None
@@ -29,10 +26,10 @@ class Utils:
 
     def analytical_solution(self):
         x = sp.symbols('x')
-        u_specific = (self.delta_max / self.L_val) * x + (self.FEI) * (
-            - (self.L_val**2 * x / 3)
-            + (self.L_val * x**2 / 2)
-            - (x**3 / 6)
+        u_specific = (self.delta_max / (3*self.L_val**3)) * (
+            (6 * self.L_val**2 * x**2)
+            - (4 * self.L_val * x**3)
+            + (x**4)
         )
         u_numeric = sp.lambdify(x, u_specific)
         self.x_vals = np.linspace(0, self.L_val, self.num_points)
@@ -81,12 +78,12 @@ class Utils:
         W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx = self.derivatives(model, x, training=training)
         
         def non_plateau():
-            f_loss = tf.reduce_mean(dW_dxxxx**2)
+            f_loss = tf.reduce_mean((dW_dxxxx - self.q)**2)
             xl = tf.cast(x < self.TOL, dtype=tf.float32)
             xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
             b1_loss = tf.reduce_mean((xl * W)**2)
             b2_loss = tf.reduce_mean((xu * (W - self.delta_max))**2)
-            b3_loss = tf.reduce_mean((xl * (dW_dxx - (self.FEI * self.L_val)))**2)
+            b3_loss = tf.reduce_mean((xl * (dW_dxx - (4 * self.delta_max / self.L_val**2)))**2)
             b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
             return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
 

@@ -2,9 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison=False, plot_losses=False, plot_losses2=False, plot_lambdas=False, plot_losses_comparison=False, plot_lambdas_comparison=False, plot_differences=False):
+def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison=False, plot_derivatives = False,
+              plot_losses=False, plot_losses2=False, plot_lambdas=False, plot_losses_comparison=False, 
+              plot_lambdas_comparison=False, plot_differences=False):
    
     W = np.load(os.path.join(filename, "W.npy"))
+    dW_dx = np.load(os.path.join(filename, "dW_dx.npy"))
+    dW_dxx = np.load(os.path.join(filename, "dW_dxx.npy"))
+    dW_dxxx = np.load(os.path.join(filename, "dW_dxxx.npy"))
+    dW_dxxxx = np.load(os.path.join(filename, "dW_dxxxx.npy"))
     x = np.load(os.path.join(filename, "x.npy"))
     w_analytic = np.load(os.path.join(filename, "w_analytic.npy"))
     lambdas = np.load(os.path.join(filename, "lambdas.npy"))
@@ -22,15 +28,32 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_comparison):
         plt.figure(figsize=figsize)
-        plt.plot(x,w_analytic, label='Analytical')
-        plt.plot(x,W, '--', label='Predicted', color='orange')
+        plt.plot(x,w_analytic, '--', label='Analytical',  color='orange')
+        plt.plot(x,W, label='Predicted')
         plt.legend()
-        plt.xlabel('x [m]')
+        plt.xlabel('Beam length / m')
         plt.ylabel('W(x) [m]')
         mape = np.mean(np.abs((w_analytic - W) / (w_analytic + 1e-30))) * 100 
         plt.title(f'Comparison of Analytical vs Predicted (MAPE: {mape:.2e}%)')
         plt.grid()
         plt.show()
+
+    if (plot_derivatives):
+        fig, axes = plt.subplots(4, 1, figsize=(figsize[0], 2*figsize[1]))
+        axes[0].plot(x, dW_dx, label='dW_dx')
+        axes[0].grid(True)
+        axes[0].legend()
+        axes[1].plot(x, dW_dxx, label='d^2W_dx^2')
+        axes[1].grid(True)
+        axes[1].legend()
+        axes[2].plot(x, dW_dxxx, label='d^3W_dx^3')
+        axes[2].grid(True)
+        axes[2].legend()
+        axes[3].plot(x, dW_dxxxx, label='d^4W_dx^4')
+        axes[3].grid(True)
+        axes[3].legend()        
+        plt.xlabel('Beam length / m')
+        plt.show()        
 
     if (plot_losses):
         plt.figure(figsize=figsize)
@@ -76,11 +99,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_lambdas):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, lambdas[:,0], '--', label='Lambda_0', color='b', linewidth='1')
-        plt.plot(epochs, lambdas[:,1], '--', label='Lambda_1', color='r', linewidth='1')
-        plt.plot(epochs, lambdas[:,2], '--', label='Lambda_2', color='g', linewidth='1')
-        plt.plot(epochs, lambdas[:,3], '--', label='Lambda_3', color='orange', linewidth='1')
-        plt.plot(epochs, lambdas[:,4], '--', label='Lambda_4', color='purple', linewidth='1')
+        plt.plot(epochs, lambdas[:,0], 'o-', label='Lambda_0 (Physics)', color='k', linewidth='1')
+        plt.plot(epochs, lambdas[:,1], 'o-', label='Lambda_1 (BC)', color='r', linewidth='1')
+        plt.plot(epochs, lambdas[:,2], 'o-', label='Lambda_2 (BC)', color='b', linewidth='1')
+        plt.plot(epochs, lambdas[:,3], 'o-', label='Lambda_3 (BC)', color='g', linewidth='1')
+        plt.plot(epochs, lambdas[:,4], 'o-', label='Lambda_4 (BC)', color='orange', linewidth='1')
         plt.yscale('log')
         #plt.ylim([10**(-14) ,10**(-3)])
         #plt.xlim([0 ,500])
@@ -132,25 +155,27 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
         plt.show()
 
 def save_results(save_dir, W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx, x, w_analytic, lambdas, losses):
-    os.makedirs(save_dir, exist_ok=True)
-    np.save(os.path.join(save_dir, "W.npy"), W.numpy()) 
-    np.save(os.path.join(save_dir, "dW_dx.npy"), dW_dx.numpy())
-    np.save(os.path.join(save_dir, "dW_dxx.npy"), dW_dxx.numpy())
-    np.save(os.path.join(save_dir, "dW_dxxx.npy"), dW_dxxx.numpy())
-    np.save(os.path.join(save_dir, "dW_dxxxx.npy"), dW_dxxxx.numpy())    
-    np.save(os.path.join(save_dir, "x.npy"), x.numpy())
-    np.save(os.path.join(save_dir, "w_analytic.npy"), w_analytic.numpy())
-    np.save(os.path.join(save_dir, "lambdas.npy"), lambdas) 
-    np.save(os.path.join(save_dir, "losses.npy"), losses)
+    result_dir = os.path.join(os.getcwd(), "Outputs", save_dir)
+    os.makedirs(result_dir, exist_ok=True)
+    np.save(os.path.join(result_dir, "W.npy"), W.numpy()) 
+    np.save(os.path.join(result_dir, "dW_dx.npy"), dW_dx.numpy())
+    np.save(os.path.join(result_dir, "dW_dxx.npy"), dW_dxx.numpy())
+    np.save(os.path.join(result_dir, "dW_dxxx.npy"), dW_dxxx.numpy())
+    np.save(os.path.join(result_dir, "dW_dxxxx.npy"), dW_dxxxx.numpy())    
+    np.save(os.path.join(result_dir, "x.npy"), x.numpy())
+    np.save(os.path.join(result_dir, "w_analytic.npy"), w_analytic.numpy())
+    np.save(os.path.join(result_dir, "lambdas.npy"), lambdas) 
+    np.save(os.path.join(result_dir, "losses.npy"), losses)
 
 def load_results(save_dir):
-    W = np.load(os.path.join(save_dir, "W.npy"))
-    dW_dx = np.load(os.path.join(save_dir, "dW_dx.npy"))
-    dW_dxx = np.load(os.path.join(save_dir, "dW_dxx.npy"))
-    dW_dxxx = np.load(os.path.join(save_dir, "dW_dxxx.npy"))
-    dW_dxxxx = np.load(os.path.join(save_dir, "dW_dxxxx.npy"))
-    x = np.load(os.path.join(save_dir, "x.npy"))
-    w_analytic = np.load(os.path.join(save_dir, "w_analytic.npy"))
-    lambdas = np.load(os.path.join(save_dir, "lambdas.npy"))
-    losses = np.load(os.path.join(save_dir, "losses.npy"))
+    result_dir = os.path.join(os.getcwd(), "Outputs", save_dir)
+    W = np.load(os.path.join(result_dir, "W.npy"))
+    dW_dx = np.load(os.path.join(result_dir, "dW_dx.npy"))
+    dW_dxx = np.load(os.path.join(result_dir, "dW_dxx.npy"))
+    dW_dxxx = np.load(os.path.join(result_dir, "dW_dxxx.npy"))
+    dW_dxxxx = np.load(os.path.join(result_dir, "dW_dxxxx.npy"))
+    x = np.load(os.path.join(result_dir, "x.npy"))
+    w_analytic = np.load(os.path.join(result_dir, "w_analytic.npy"))
+    lambdas = np.load(os.path.join(result_dir, "lambdas.npy"))
+    losses = np.load(os.path.join(result_dir, "losses.npy"))
     return W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx, x, w_analytic, lambdas, losses
