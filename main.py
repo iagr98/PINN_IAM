@@ -32,14 +32,21 @@ if __name__ == "__main__":
     L_val = 1
     delta_max = 1
     q = 8
-    filename = "pinn_results_normalization"
+    filename = "pinn_results_case_1"
     run_model(L_val, delta_max, q, filename, epochs, capture, strategy=False)
 
     # Parameter declaration for case 2
     L_val = 10
     delta_max = 1e-3
     q = 8
-    filename = "pinn_results"
+    filename = "pinn_results_case_2"
+    run_model(L_val, delta_max, q, filename, epochs, capture, strategy=False)
+
+    # Parameter declaration for case 3
+    L_val = 10
+    delta_max = 10e-3
+    q = 80
+    filename = "pinn_results_case_3"
     run_model(L_val, delta_max, q, filename, epochs, capture, strategy=False)
 
     print("Training of model completed.")
