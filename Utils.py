@@ -8,11 +8,10 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 
 class Utils:
 
-    def __init__(self, L_val, delta_max, q, num_points=300):
+    def __init__(self, L_val, EI_val, q_0):
         self.L_val = L_val
-        self.delta_max = delta_max
-        self.q = q
-        self.num_points = num_points             
+        self.EI_val = EI_val
+        self.q_0 = q_0           
         self.TOL = 1e-5
         self.inverse = False
         self.inverse_var = None
@@ -26,13 +25,9 @@ class Utils:
 
     def analytical_solution(self):
         x = sp.symbols('x')
-        u_specific = (self.delta_max / (3*self.L_val**3)) * (
-            (6 * self.L_val**2 * x**2)
-            - (4 * self.L_val * x**3)
-            + (x**4)
-        )
+        u_specific = (((self.q_0*self.L_val**4)/(np.pi**4*self.EI_val)) * sp.sin(np.pi*x/self.L_val))
         u_numeric = sp.lambdify(x, u_specific)
-        self.x_vals = np.linspace(0, self.L_val, self.num_points)
+        self.x_vals = np.linspace(0, self.L_val, 300)
         self.u_vals = u_numeric(self.x_vals)
 
         return self.x_vals, self.u_vals
@@ -77,28 +72,15 @@ class Utils:
     def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
         W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx = self.derivatives(model, x, training=training)
         
-        def non_plateau():
-            f_loss = tf.reduce_mean((dW_dxxxx - self.q)**2)
-            xl = tf.cast(x < self.TOL, dtype=tf.float32)
-            xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
-            b1_loss = tf.reduce_mean((xl * W)**2)
-            b2_loss = tf.reduce_mean((xu * (W - self.delta_max))**2)
-            b3_loss = tf.reduce_mean((xl * (dW_dxx - (4 * self.delta_max / self.L_val**2)))**2)
-            b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
-            return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
-
-        def plateau():
-            gamma = 0.5
-            f_loss, [b1_loss, b2_loss, b3_loss, b4_loss] = non_plateau()
-            L_average = tf.reduce_mean([f_loss, b1_loss, b2_loss, b3_loss, b4_loss])
-            f_loss += gamma * (L_average - f_loss)
-            b1_loss += gamma * (L_average - b1_loss)
-            b2_loss += gamma * (L_average - b2_loss)
-            b3_loss += gamma * (L_average - b3_loss)
-            b4_loss += gamma * (L_average - b4_loss)
-            return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
-
-        return tf.cond(pred=tf.equal(self.is_plateau_tf, False),true_fn=non_plateau,false_fn=plateau)       
+        f_loss = tf.reduce_mean(((self.q_0 / self.EI_val) * tf.math.sin(np.pi*x/self.L_val) - dW_dxxxx)**2)
+        xl = tf.cast(x < self.TOL, dtype=tf.float32)
+        xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
+        b1_loss = tf.reduce_mean((xl * W)**2)
+        b2_loss = tf.reduce_mean((xu * W)**2)
+        b3_loss = tf.reduce_mean((xl * dW_dxx)**2)
+        b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
+        return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
+       
     
     @tf.function
     def validation_loss(self, model:tf.keras.Model, x, w):
@@ -156,7 +138,7 @@ class Utils:
         for epoch in range(epochs):
             if resample:
                 x = self.training_batch(batch_size)
-            grads, f_loss, b_losses, args = self.relobralo(model, x, args)
+            grads, f_loss, b_losses, args = self.relobralo(model, tf.constant(x, dtype=tf.float32), args)
             optimizer.apply_gradients(zip(grads[0], model[0].trainable_variables))
             self.current_losses = [args['l'+str(i)].numpy() for i in range(self.num_b_losses+1)]
 

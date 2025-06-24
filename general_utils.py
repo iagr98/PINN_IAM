@@ -28,7 +28,7 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_comparison):
         plt.figure(figsize=figsize)
-        plt.plot(x,w_analytic, '--', label='Analytical',  color='orange')
+        plt.plot(x,w_analytic, '-', label='Analytical',  color='r')
         plt.plot(x,W, label='Predicted')
         plt.legend()
         plt.xlabel('Beam length / m')
@@ -57,11 +57,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_losses):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, lambdas[:,0]*losses[:,0], '-o', label='Loss 0 (Physics)', color='k')
-        plt.plot(epochs, lambdas[:,1]*losses[:,1], '-o', label='Loss_1 (BC)', color='r')
-        plt.plot(epochs, lambdas[:,2]*losses[:,2], '-o', label='Loss_2 (BC)', color='b')
-        plt.plot(epochs, lambdas[:,3]*losses[:,3], '-o', label='Loss_3 (BC)', color='g')
-        plt.plot(epochs, lambdas[:,4]*losses[:,4], '-o', label='Loss_4 (BC)', color='orange')
+        plt.plot(epochs, lambdas[:,0]*losses[:,0], '-', label='Loss 0 (Physics)', color='k')
+        plt.plot(epochs, lambdas[:,1]*losses[:,1], '-', label='Loss_1 (BC)', color='r')
+        plt.plot(epochs, lambdas[:,2]*losses[:,2], '-', label='Loss_2 (BC)', color='b')
+        plt.plot(epochs, lambdas[:,3]*losses[:,3], '-', label='Loss_3 (BC)', color='g')
+        plt.plot(epochs, lambdas[:,4]*losses[:,4], '-', label='Loss_4 (BC)', color='orange')
         # plot the total loss multiplied by its corresponding lambda
         plt.plot(epochs, lambdas[:,0]*losses[:,0] + lambdas[:,1]*losses[:,1] + lambdas[:,2]*losses[:,2] + lambdas[:,3]*losses[:,3] + lambdas[:,4]*losses[:,4], '-', label='Total Loss', color='purple')
         L_average = np.mean(lambdas[:,0:5]*losses[:,0:5], axis=1)
@@ -78,11 +78,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_losses2):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, lambdas1[:,0]*losses1[:,0], '-o', label='Loss 0 (Physics)', color='k')
-        plt.plot(epochs, lambdas1[:,1]*losses1[:,1], '-o', label='Loss_1 (BC)', color='r')
-        plt.plot(epochs, lambdas1[:,2]*losses1[:,2], '-o', label='Loss_2 (BC)', color='b')
-        plt.plot(epochs, lambdas1[:,3]*losses1[:,3], '-o', label='Loss_3 (BC)', color='g')
-        plt.plot(epochs, lambdas1[:,4]*losses1[:,4], '-o', label='Loss_4 (BC)', color='orange')
+        plt.plot(epochs, lambdas1[:,0]*losses1[:,0], '-', label='Loss 0 (Physics)', color='k')
+        plt.plot(epochs, lambdas1[:,1]*losses1[:,1], '-', label='Loss_1 (BC)', color='r')
+        plt.plot(epochs, lambdas1[:,2]*losses1[:,2], '-', label='Loss_2 (BC)', color='b')
+        plt.plot(epochs, lambdas1[:,3]*losses1[:,3], '-', label='Loss_3 (BC)', color='g')
+        plt.plot(epochs, lambdas1[:,4]*losses1[:,4], '-', label='Loss_4 (BC)', color='orange')
         # plot the total loss multiplied by its corresponding lambda
         plt.plot(epochs, lambdas1[:,0]*losses1[:,0] + lambdas1[:,1]*losses1[:,1] + lambdas1[:,2]*losses1[:,2] + lambdas1[:,3]*losses1[:,3] + lambdas1[:,4]*losses1[:,4], '-', label='Total Loss', color='purple')
         L_average = np.mean(lambdas1[:,0:5]*losses1[:,0:5], axis=1)
@@ -99,11 +99,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_lambdas):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, lambdas[:,0], 'o-', label='Lambda_0 (Physics)', color='k', linewidth='1')
-        plt.plot(epochs, lambdas[:,1], 'o-', label='Lambda_1 (BC)', color='r', linewidth='1')
-        plt.plot(epochs, lambdas[:,2], 'o-', label='Lambda_2 (BC)', color='b', linewidth='1')
-        plt.plot(epochs, lambdas[:,3], 'o-', label='Lambda_3 (BC)', color='g', linewidth='1')
-        plt.plot(epochs, lambdas[:,4], 'o-', label='Lambda_4 (BC)', color='orange', linewidth='1')
+        plt.plot(epochs, lambdas[:,0], '-', label='Lambda_0 (Physics)', color='k', linewidth='1')
+        plt.plot(epochs, lambdas[:,1], '-', label='Lambda_1 (BC)', color='r', linewidth='1')
+        plt.plot(epochs, lambdas[:,2], '-', label='Lambda_2 (BC)', color='b', linewidth='1')
+        plt.plot(epochs, lambdas[:,3], '-', label='Lambda_3 (BC)', color='g', linewidth='1')
+        plt.plot(epochs, lambdas[:,4], '-', label='Lambda_4 (BC)', color='orange', linewidth='1')
         plt.yscale('log')
         #plt.ylim([10**(-14) ,10**(-3)])
         #plt.xlim([0 ,500])
@@ -116,11 +116,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
 
     if (plot_losses_comparison):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, abs(lambdas[:,0]*losses[:,0]-lambdas1[:,0]*losses1[:,0]), 'o-', label='Delta_Loss 0 (Physics)', color='k')
-        plt.plot(epochs, abs(lambdas[:,1]*losses[:,1]-lambdas1[:,1]*losses1[:,1]), 'o-', label='Delta_Loss_1 (BC)', color='r')
-        plt.plot(epochs, abs(lambdas[:,2]*losses[:,2]-lambdas1[:,2]*losses1[:,2]), 'o-', label='Delta_Loss_2 (BC)', color='b')
-        plt.plot(epochs, abs(lambdas[:,3]*losses[:,3]-lambdas1[:,3]*losses1[:,3]), 'o-', label='Delta_Loss_3 (BC)', color='g')
-        plt.plot(epochs, abs(lambdas[:,4]*losses[:,4]-lambdas1[:,4]*losses1[:,4]), 'o-', label='Delta_Loss_4 (BC)', color='orange')
+        plt.plot(epochs, abs(lambdas[:,0]*losses[:,0]-lambdas1[:,0]*losses1[:,0]), '-', label='Delta_Loss 0 (Physics)', color='k')
+        plt.plot(epochs, abs(lambdas[:,1]*losses[:,1]-lambdas1[:,1]*losses1[:,1]), '-', label='Delta_Loss_1 (BC)', color='r')
+        plt.plot(epochs, abs(lambdas[:,2]*losses[:,2]-lambdas1[:,2]*losses1[:,2]), '-', label='Delta_Loss_2 (BC)', color='b')
+        plt.plot(epochs, abs(lambdas[:,3]*losses[:,3]-lambdas1[:,3]*losses1[:,3]), '-', label='Delta_Loss_3 (BC)', color='g')
+        plt.plot(epochs, abs(lambdas[:,4]*losses[:,4]-lambdas1[:,4]*losses1[:,4]), '-', label='Delta_Loss_4 (BC)', color='orange')
         plt.xlabel('epochs')
         plt.grid()
         plt.legend()
@@ -130,11 +130,11 @@ def plotting(filename, filename2=None, figsize=(4,4), capture=1, plot_comparison
     
     if (plot_lambdas_comparison):
         plt.figure(figsize=figsize)
-        plt.plot(epochs, abs(lambdas[:,0]-lambdas1[:,0]), 'o-', label='Delta_Lambda 0 (Physics)', color='k')
-        plt.plot(epochs, abs(lambdas[:,1]-lambdas1[:,1]), 'o-', label='Delta_Lambda_1 (BC)', color='r')
-        plt.plot(epochs, abs(lambdas[:,2]-lambdas1[:,2]), 'o-', label='Delta_Lambda_2 (BC)', color='b')
-        plt.plot(epochs, abs(lambdas[:,3]-lambdas1[:,3]), 'o-', label='Delta_Lambda_3 (BC)', color='g')
-        plt.plot(epochs, abs(lambdas[:,4]-lambdas1[:,4]), 'o-', label='Delta_Lambda_4 (BC)', color='orange')
+        plt.plot(epochs, abs(lambdas[:,0]-lambdas1[:,0]), '-', label='Delta_Lambda 0 (Physics)', color='k')
+        plt.plot(epochs, abs(lambdas[:,1]-lambdas1[:,1]), '-', label='Delta_Lambda_1 (BC)', color='r')
+        plt.plot(epochs, abs(lambdas[:,2]-lambdas1[:,2]), '-', label='Delta_Lambda_2 (BC)', color='b')
+        plt.plot(epochs, abs(lambdas[:,3]-lambdas1[:,3]), '-', label='Delta_Lambda_3 (BC)', color='g')
+        plt.plot(epochs, abs(lambdas[:,4]-lambdas1[:,4]), '-', label='Delta_Lambda_4 (BC)', color='orange')
         plt.xlabel('epochs')
         plt.grid()
         plt.legend()
