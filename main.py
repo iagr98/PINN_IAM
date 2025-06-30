@@ -25,10 +25,10 @@ def run_model(L_val, EI_val, q_0, filename, nlayers, nnodes, epochs, capture, st
 # create an init function that is only run as run from this file
 if __name__ == "__main__":
         
-    nlayers = 2
-    nnodes = 32
-    epochs = 1001
-    capture = 100
+    nlayers = 4
+    nnodes = 16
+    epochs = 50001
+    capture = 1000
     
     # Parameter declaration
     L_val = 10

@@ -43,7 +43,7 @@ class Utils:
         return Model(x, u, name=name)
 
     
-    def training_batch(self, batch_size:int=1024):
+    def training_batch(self, batch_size:int=32):
         " Sample points along the length of the beam "
         #########
         x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
@@ -173,11 +173,12 @@ class Utils:
                 val_loss = self.validation_loss(model, x_val, w_val)
                 loss = f_loss + tf.reduce_sum(b_losses)
                 print(
-                    f"epoch {int(epoch)}: "
-                    f"loss={loss.numpy():.3e}, "
-                    f"val. loss={val_loss.numpy():.3e}, "
-                    f"plateau={self.is_plateau_tf.numpy()}"
-                )
+                    f"Epoch {epoch:4d} | "
+                    f"F: {f_loss.numpy():.2e} | "
+                    f"B: {'  '.join(f'{b.numpy():.2e}' for b in b_losses)} | "
+                    f"Val Loss: {val_loss.numpy():.3e}"
+                    )
+
                 lambdas.append([args[f"lam{i}"].numpy() for i in range(len(b_losses)+1)])
                 losses.append([args[f"l{i}"].numpy() for i in range(len(b_losses)+1)])
 
