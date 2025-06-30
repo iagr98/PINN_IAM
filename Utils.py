@@ -32,22 +32,22 @@ class Utils:
 
         return self.x_vals, self.u_vals
     
-    def fully_connected(self, nlayers, nnodes, activation=tf.nn.tanh, name='fully_connected'):
+    def fully_connected(self, nlayers, nnodes, activation=tf.math.sin, name='fully_connected'):
         x = Input((1,), name='x')
         u = (x - self.data_min) / (self.data_max - self.data_min) * 2 - 1
-        kernel_init = tf.keras.initializers.GlorotNormal(seed=42)  # Fixed seed
-        u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name='dense0')(u)
+        # kernel_init = tf.keras.initializers.GlorotNormal(seed=42)  # Fixed seed
+        u = Dense(nnodes, activation=activation, kernel_initializer=tf.keras.initializers.GlorotNormal(), name='dense0')(u)
         for i in range(1, nlayers):
-            u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name=f'dense{i}')(u) + u
-        u = Dense(1, activation='sigmoid', kernel_initializer=kernel_init)(u)
+            u = Dense(nnodes, activation=activation, kernel_initializer=tf.keras.initializers.GlorotNormal(), name='dense'+str(i))(u) + u
+        u = Dense(1, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotNormal())(u)
         return Model(x, u, name=name)
 
     
     def training_batch(self, batch_size:int=1024):
         " Sample points along the length of the beam "
         #########
-        # x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
-        x = self.rng.uniform(0, self.L_val, size=(batch_size, 1))
+        x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
+        # x = self.rng.uniform(0, self.L_val, size=(batch_size, 1))
         #########
         zero_tensor = tf.constant([[0.0]], dtype=tf.float32)        # Shape (1, 1)
         lval_tensor = tf.constant([[self.L_val]], dtype=tf.float32) # Shape (1, 1)
@@ -70,9 +70,9 @@ class Utils:
 
     @tf.function
     def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
-        W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx = self.derivatives(model, x, training=training)
-        
-        f_loss = tf.reduce_mean(((self.q_0 / self.EI_val) * tf.math.sin(np.pi*x/self.L_val) - dW_dxxxx)**2)
+        W, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x, training=training)
+
+        f_loss = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x/self.L_val) - self.EI_val*dW_dxxxx)**2)
         xl = tf.cast(x < self.TOL, dtype=tf.float32)
         xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
         b1_loss = tf.reduce_mean((xl * W)**2)
@@ -108,19 +108,36 @@ class Utils:
             args['l'+str(i)] = losses[i]
         return grads, f_loss, b_losses, args
     
+    @tf.function
+    def manual(self, model, x, args:dict):
+        f_loss, b_losses = self.calculate_loss(model, x, aggregate_boundaries=False, training=True)
+        loss = args['lam'+str(0)]*f_loss + tf.reduce_sum([args['lam'+str(i+1)]*b_losses[i] for i in range(len(b_losses))])
+        grads = [tf.gradients(loss, model[0].trainable_variables)]
+
+        args = args.copy()
+        for i, loss in enumerate([f_loss] + b_losses):
+            args['l'+str(i)] = loss    
+
+        return grads, f_loss, b_losses, args
+
+    
     def train(self, nlayers=5, nnodes=360, lr=0.001, epochs=5001, batch_size=1024, resample=True, T=0.1, alpha=0.999, rho=1, patience=4, factor=0.1, capture=1, strategy=True):
         model = [self.fully_connected(nlayers, nnodes)]
         # print(model[0].layers[1].get_weights()[0][:5])  # First 5 weights of the first layer
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-        args = {"lam"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)}
-        args.update({"l"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
-        args.update({"l0"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
-        args["T"] = tf.constant(T, dtype=tf.float32)
-        # rho_schedule = (np.random.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
-        rho_schedule = (self.rng.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
-        args['rho'] = tf.constant(rho_schedule[0], dtype=tf.float32)
-        alpha_schedule = [tf.constant(1., tf.float32), tf.constant(0., tf.float32)] + [tf.constant(alpha, tf.float32)]
-        args["alpha"] = alpha_schedule[0]
+
+        args = {"lam"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)} 
+        # args.update({"l"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
+        # args.update({"l0"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
+        # args["T"] = tf.constant(T, dtype=tf.float32)
+        # # rho_schedule = (np.random.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
+        # rho_schedule = (self.rng.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
+        # args['rho'] = tf.constant(rho_schedule[0], dtype=tf.float32)
+        # alpha_schedule = [tf.constant(1., tf.float32), tf.constant(0., tf.float32)] + [tf.constant(alpha, tf.float32)]
+        # args["alpha"] = alpha_schedule[0]
+        alpha = [1.]
+        args.update({"alpha": tf.constant(alpha[0], dtype=tf.float32)})
+
         best_loss = 1e9
         cooldown = patience
         plateau_count = 0
@@ -138,18 +155,18 @@ class Utils:
         for epoch in range(epochs):
             if resample:
                 x = self.training_batch(batch_size)
-            grads, f_loss, b_losses, args = self.relobralo(model, tf.constant(x, dtype=tf.float32), args)
+            grads, f_loss, b_losses, args = self.manual(model, tf.constant(x, dtype=tf.float32), args)
             optimizer.apply_gradients(zip(grads[0], model[0].trainable_variables))
-            self.current_losses = [args['l'+str(i)].numpy() for i in range(self.num_b_losses+1)]
 
-            if (epoch == 1):
-                for i in range(self.num_b_losses+1):
-                    args['l0'+str(i)] = ([f_loss]+b_losses)[i]
-            if len(alpha_schedule) > 1:
-                args['alpha'] = alpha_schedule[1]
-                alpha_schedule = alpha_schedule[1:]
-            args['rho'] = rho_schedule[1]
-            rho_schedule = rho_schedule[1:]
+            # self.current_losses = [args['l'+str(i)].numpy() for i in range(self.num_b_losses+1)]
+            # if (epoch == 1):
+            #     for i in range(self.num_b_losses+1):
+            #         args['l0'+str(i)] = ([f_loss]+b_losses)[i]
+            # if len(alpha_schedule) > 1:
+            #     args['alpha'] = alpha_schedule[1]
+            #     alpha_schedule = alpha_schedule[1:]
+            # args['rho'] = rho_schedule[1]
+            # rho_schedule = rho_schedule[1:]
             
             if epoch % capture == 0:
                 x_val, w_val = self.validation_batch()
