@@ -42,7 +42,7 @@ class Utils:
         return Model(x, u, name=name)
 
     
-    def training_batch(self, batch_size:int=38, n_boundary_points=2):
+    def training_batch(self, batch_size:int=38, n_boundary_points=4):
         # " Sample points along the length of the beam "
         # np.random.seed(42)  ########## Fixed seed for reproducibility
         # x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
@@ -79,10 +79,10 @@ class Utils:
         W_interior, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x_interior, training=training)
         f_loss_interior = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x_interior/self.L_val) - self.EI_val*dW_dxxxx)**2)
         W_boundary, _, dW_dxx_boundary, _, dW_dxxxx_boundary = self.derivatives(model, x_boundary, training=training)
-        b1_loss = tf.reduce_mean((W_boundary[0])**2)  # At x=0
-        b2_loss = tf.reduce_mean((W_boundary[-1])**2)  # At x=L
-        b3_loss = tf.reduce_mean((dW_dxx_boundary[0])**2)  # At x=0
-        b4_loss = tf.reduce_mean((dW_dxx_boundary[-1])**2)  # At x=L
+        b1_loss = tf.reduce_mean((W_boundary[0:3])**2)  # At x=0
+        b2_loss = tf.reduce_mean((W_boundary[-4:-1])**2)  # At x=L
+        b3_loss = tf.reduce_mean((dW_dxx_boundary[0:3])**2)  # At x=0
+        b4_loss = tf.reduce_mean((dW_dxx_boundary[-4:-1])**2)  # At x=L
         total_loss = f_loss_interior + b1_loss + b2_loss + b3_loss + b4_loss
         return total_loss, f_loss_interior, [b1_loss, b2_loss, b3_loss, b4_loss]
     # def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
