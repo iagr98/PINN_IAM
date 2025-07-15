@@ -6,12 +6,8 @@ import tensorflow as tf
 import general_utils
 
 # Seeding for reproducibility
-tf.config.experimental.enable_op_determinism()
 SEED = 42
-np.random.seed(SEED)          # NumPy operations
 tf.random.set_seed(SEED)      # TensorFlow operations
-os.environ['TF_DETERMINISTIC_OPS'] = '1'
-os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
 
 def run_model(L_val, EI_val, q_0, filename, nlayers, nnodes, epochs, capture, strategy=True):
@@ -27,14 +23,14 @@ if __name__ == "__main__":
         
     nlayers = 4
     nnodes = 16
-    epochs = 50001
+    epochs = 10001
     capture = 1000
     
     # Parameter declaration
     L_val = 10
     EI_val = 20.83333
     q_0 = 0.015
-    filename = "pinn_results"
+    filename = "pinn_results_seeded"
     run_model(L_val, EI_val, q_0, filename, nlayers, nnodes, epochs, capture, strategy=False)
 
     print("Training of model completed.")

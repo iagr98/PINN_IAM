@@ -19,7 +19,6 @@ class Utils:
         self.data_min = 0
         self.data_max = self.L_val
         self.current_losses = np.zeros((self.num_b_losses+1, 1))
-        self.rng = np.random.RandomState(seed=42)
         self.is_plateau_tf = tf.Variable(False, trainable=False, dtype=tf.bool)
 
 
@@ -35,23 +34,30 @@ class Utils:
     def fully_connected(self, nlayers, nnodes, activation=tf.math.sin, name='fully_connected'):
         x = Input((1,), name='x')
         u = (x - self.data_min) / (self.data_max - self.data_min) * 2 - 1
-        # kernel_init = tf.keras.initializers.GlorotNormal(seed=42)  # Fixed seed
-        u = Dense(nnodes, activation=activation, kernel_initializer=tf.keras.initializers.GlorotNormal(), name='dense0')(u)
+        kernel_init = tf.keras.initializers.GlorotNormal(seed=200)  ########## Fixed seed for reproducibility
+        u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name='dense0')(u)
         for i in range(1, nlayers):
-            u = Dense(nnodes, activation=activation, kernel_initializer=tf.keras.initializers.GlorotNormal(), name='dense'+str(i))(u) + u
-        u = Dense(1, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotNormal())(u)
+            u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name='dense'+str(i))(u) + u
+        u = Dense(1, activation='sigmoid', kernel_initializer=kernel_init)(u)
         return Model(x, u, name=name)
 
     
-    def training_batch(self, batch_size:int=32):
-        " Sample points along the length of the beam "
-        #########
-        x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
-        # x = self.rng.uniform(0, self.L_val, size=(batch_size, 1))
-        #########
-        zero_tensor = tf.constant([[0.0]], dtype=tf.float32)        # Shape (1, 1)
-        lval_tensor = tf.constant([[self.L_val]], dtype=tf.float32) # Shape (1, 1)
-        return tf.cast(tf.concat([zero_tensor, x, lval_tensor], axis=0), dtype=tf.float32)
+    def training_batch(self, batch_size:int=38, n_boundary_points=2):
+        # " Sample points along the length of the beam "
+        # np.random.seed(42)  ########## Fixed seed for reproducibility
+        # x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
+        # zero_tensor = tf.constant([[0.0]], dtype=tf.float32)        # Shape (1, 1)
+        # lval_tensor = tf.constant([[self.L_val]], dtype=tf.float32) # Shape (1, 1)
+        # x = np.concatenate([zero_tensor, x, lval_tensor], axis=0)
+        # return tf.cast(x, dtype=tf.float32)
+
+        interior_points = batch_size - 2 * n_boundary_points
+        if interior_points < 0:
+            raise ValueError("Batch size is too small for the given number of boundary points. "
+                            "Make sure that batch_size >= 2 * n_boundary_points.")
+        x_interior = np.random.uniform(0, self.L_val, size=(interior_points, 1))
+        x_boundary = np.concatenate([np.zeros((n_boundary_points, 1)), np.ones((n_boundary_points, 1)) * self.L_val], axis=0)
+        return tf.cast(x_interior, dtype=tf.float32), tf.cast(x_boundary, dtype=tf.float32)
     
     def validation_batch(self):
         x, w = self.analytical_solution()
@@ -69,17 +75,28 @@ class Utils:
         return W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx
 
     @tf.function
-    def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
-        W, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x, training=training)
+    def calculate_loss(self, model:tf.keras.Model, x_interior, x_boundary, aggregate_boundaries:bool=False, training:bool=False):
+        W_interior, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x_interior, training=training)
+        f_loss_interior = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x_interior/self.L_val) - self.EI_val*dW_dxxxx)**2)
+        W_boundary, _, dW_dxx_boundary, _, dW_dxxxx_boundary = self.derivatives(model, x_boundary, training=training)
+        b1_loss = tf.reduce_mean((W_boundary[0])**2)  # At x=0
+        b2_loss = tf.reduce_mean((W_boundary[-1])**2)  # At x=L
+        b3_loss = tf.reduce_mean((dW_dxx_boundary[0])**2)  # At x=0
+        b4_loss = tf.reduce_mean((dW_dxx_boundary[-1])**2)  # At x=L
+        total_loss = f_loss_interior + b1_loss + b2_loss + b3_loss + b4_loss
+        return total_loss, f_loss_interior, [b1_loss, b2_loss, b3_loss, b4_loss]
+    # def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
+        # W, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x, training=training)
+        # f_loss = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x/self.L_val) - self.EI_val*dW_dxxxx)**2)
+        # xl = tf.cast(x < self.TOL, dtype=tf.float32)
+        # xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
+        # b1_loss = tf.reduce_mean((xl * W)**2)
+        # b2_loss = tf.reduce_mean((xu * W)**2)
+        # b3_loss = tf.reduce_mean((xl * dW_dxx)**2)
+        # b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
+        # return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
 
-        f_loss = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x/self.L_val) - self.EI_val*dW_dxxxx)**2)
-        xl = tf.cast(x < self.TOL, dtype=tf.float32)
-        xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
-        b1_loss = tf.reduce_mean((xl * W)**2)
-        b2_loss = tf.reduce_mean((xu * W)**2)
-        b3_loss = tf.reduce_mean((xl * dW_dxx)**2)
-        b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
-        return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
+
        
     
     @tf.function
@@ -109,16 +126,22 @@ class Utils:
         return grads, f_loss, b_losses, args
     
     @tf.function
-    def manual(self, model, x, args:dict):
-        f_loss, b_losses = self.calculate_loss(model, x, aggregate_boundaries=False, training=True)
-        loss = args['lam'+str(0)]*f_loss + tf.reduce_sum([args['lam'+str(i+1)]*b_losses[i] for i in range(len(b_losses))])
+    def manual(self, model, x_interior, x_boundary, args:dict):
+        loss, f_loss, b_losses = self.calculate_loss(model, x_interior, x_boundary, aggregate_boundaries=False, training=True)
+        # loss = args['lam'+str(0)] * f_loss + tf.reduce_sum([args['lam'+str(i+1)] * b_losses[i] for i in range(len(b_losses))])
         grads = [tf.gradients(loss, model[0].trainable_variables)]
-
         args = args.copy()
-        for i, loss in enumerate([f_loss] + b_losses):
-            args['l'+str(i)] = loss    
-
+        for i, loss_val in enumerate([f_loss] + b_losses):
+            args['l' + str(i)] = loss_val
         return grads, f_loss, b_losses, args
+    # def manual(self, model, x, args:dict):
+    #     f_loss, b_losses = self.calculate_loss(model, x, aggregate_boundaries=False, training=True)
+    #     loss = args['lam'+str(0)]*f_loss + tf.reduce_sum([args['lam'+str(i+1)]*b_losses[i] for i in range(len(b_losses))])
+    #     grads = [tf.gradients(loss, model[0].trainable_variables)]
+    #     args = args.copy()
+    #     for i, loss in enumerate([f_loss] + b_losses):
+    #         args['l'+str(i)] = loss    
+    #     return grads, f_loss, b_losses, args
 
     
     def train(self, nlayers=5, nnodes=360, lr=0.001, epochs=5001, batch_size=1024, resample=True, T=0.1, alpha=0.999, rho=1, patience=4, factor=0.1, capture=1, strategy=True):
@@ -146,7 +169,8 @@ class Utils:
 
         print('Start training of PINN using Tensorflow')
         start = time()
-        x = self.training_batch(batch_size)
+        # x = self.training_batch(batch_size)
+        x_interior, x_boundary = self.training_batch(batch_size)
         lambdas = []
         losses = []
         previous_loss = None
@@ -155,7 +179,8 @@ class Utils:
         for epoch in range(epochs):
             if resample:
                 x = self.training_batch(batch_size)
-            grads, f_loss, b_losses, args = self.manual(model, tf.constant(x, dtype=tf.float32), args)
+            # grads, f_loss, b_losses, args = self.manual(model, tf.constant(x, dtype=tf.float32), args)
+            grads, f_loss, b_losses, args = self.manual(model, x_interior, x_boundary, args)
             optimizer.apply_gradients(zip(grads[0], model[0].trainable_variables))
 
             # self.current_losses = [args['l'+str(i)].numpy() for i in range(self.num_b_losses+1)]
@@ -167,17 +192,26 @@ class Utils:
             #     alpha_schedule = alpha_schedule[1:]
             # args['rho'] = rho_schedule[1]
             # rho_schedule = rho_schedule[1:]
-            
+
+
             if epoch % capture == 0:
                 x_val, w_val = self.validation_batch()
                 val_loss = self.validation_loss(model, x_val, w_val)
                 loss = f_loss + tf.reduce_sum(b_losses)
+                x_boundary_vals = tf.constant([[0.0], [self.L_val/2], [self.L_val]], dtype=tf.float32)
+                W_boundary_vals = model[0](x_boundary_vals, training=False)
+                deflection_at_0 = W_boundary_vals[0].numpy()
+                deflection_at_L_mid = W_boundary_vals[1].numpy()
+                deflection_at_L = W_boundary_vals[2].numpy()
                 print(
                     f"Epoch {epoch:4d} | "
-                    f"F: {f_loss.numpy():.2e} | "
-                    f"B: {'  '.join(f'{b.numpy():.2e}' for b in b_losses)} | "
-                    f"Val Loss: {val_loss.numpy():.3e}"
-                    )
+                    f"F: {f_loss.numpy():.1e} | "
+                    f"B: {'  '.join(f'{b.numpy():.1e}' for b in b_losses)} | "
+                    f"Val Loss: {val_loss.numpy():.1e} | "
+                    f"W_0: {deflection_at_0.item():.1e} | "
+                    f"W_mid: {deflection_at_L_mid.item():.1e} | "
+                    f"W_L: {deflection_at_L.item():.1e} | "
+                )
 
                 lambdas.append([args[f"lam{i}"].numpy() for i in range(len(b_losses)+1)])
                 losses.append([args[f"l{i}"].numpy() for i in range(len(b_losses)+1)])
