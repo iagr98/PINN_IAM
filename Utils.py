@@ -1,250 +1,229 @@
-import sympy as sp
+import torch
+import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-from time import time
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Lambda
+import copy
+import os
+
+# Device
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device( 'cpu')
+
+# PINN model
+class PINN(nn.Module):
+    def __init__(self, layers):
+        super(PINN, self).__init__()
+        self.net = nn.Sequential()
+        for i in range(len(layers) - 1):
+            self.net.add_module(f"layer{i}", nn.Linear(layers[i], layers[i + 1]))
+            if i < len(layers) - 2:
+                self.net.add_module(f"tanh{i}", nn.Tanh())
+
+    def forward(self, x):
+        return self.net(x)
 
 class Utils:
 
-    def __init__(self, L_val, EI_val, q_0):
-        self.L_val = L_val
-        self.EI_val = EI_val
-        self.q_0 = q_0           
-        self.TOL = 1e-5
-        self.inverse = False
-        self.inverse_var = None
-        self.num_b_losses = 4
-        self.data_min = 0
-        self.data_max = self.L_val
-        self.current_losses = np.zeros((self.num_b_losses+1, 1))
-        self.is_plateau_tf = tf.Variable(False, trainable=False, dtype=tf.bool)
+    def __init__(self, epochs=30001, inverse=False, scheme='own', conditioning=False):
+        self.q_0 = 0.015
+        self.l = 10
+        self.EI = 20.83
+        self.scheme = scheme
+        self.epochs = epochs
+        self.inverse = inverse
+        self.conditioning = conditioning
 
 
-    def analytical_solution(self):
-        x = sp.symbols('x')
-        u_specific = (((self.q_0*self.L_val**4)/(np.pi**4*self.EI_val)) * sp.sin(np.pi*x/self.L_val))
-        u_numeric = sp.lambdify(x, u_specific)
-        self.x_vals = np.linspace(0, self.L_val, 300)
-        self.u_vals = u_numeric(self.x_vals)
+    # Right-hand side of Bernoulli equation
+    def f(self, x):
+        return self.q_0*torch.sin(np.pi*x/self.l)
 
-        return self.x_vals, self.u_vals
+    # PDE residual
+    def pde_loss(self, X):
+        X.requires_grad_(True)
+        u = self.model(X)
+        u_x = torch.autograd.grad(u, X, grad_outputs=torch.ones_like(u), create_graph=True)[0]
+        u_xx = torch.autograd.grad(u_x, X, torch.ones_like(u_x), create_graph=True)[0]
+        u_xxx = torch.autograd.grad(u_xx, X, torch.ones_like(u_x), create_graph=True)[0]
+        u_xxxx = torch.autograd.grad(u_xxx, X, torch.ones_like(u_x), create_graph=True)[0]
+        source = self.f(X)
+        return torch.mean((source-u_xxxx*self.EI)**2)
+
+    # Boundary loss
+    def boundary_loss(self, Xb):
+        Xb.requires_grad_(True)
+        u=self.model(Xb)
+        u_x = torch.autograd.grad(u, Xb, grad_outputs=torch.ones_like(u), create_graph=True)[0]
+        u_xx = torch.autograd.grad(u_x, Xb, torch.ones_like(u_x), create_graph=True)[0]
+        loss_D = torch.mean(u**2)
+        loss_N = torch.mean(u_xx**2)
+        return loss_D, loss_N
+
+    # Generate collocation and boundary points
+    def generate_points(self, n_interior):
+        x_in = torch.linspace(0,10,n_interior).reshape(n_interior,1).to(device)
+        x_b = torch.tensor([[0],[10]], dtype=torch.float32).to(device)
+        return x_in, x_b
     
-    def fully_connected(self, nlayers, nnodes, activation=tf.math.sin, name='fully_connected'):
-        x = Input((1,), name='x')
-        u = (x - self.data_min) / (self.data_max - self.data_min) * 2 - 1
-        kernel_init = tf.keras.initializers.GlorotNormal(seed=200)  ########## Fixed seed for reproducibility
-        u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name='dense0')(u)
-        for i in range(1, nlayers):
-            u = Dense(nnodes, activation=activation, kernel_initializer=kernel_init, name='dense'+str(i))(u) + u
-        u = Dense(1, activation='sigmoid', kernel_initializer=kernel_init)(u)
-        return Model(x, u, name=name)
+    def balancing_scheme(self, loss_in, loss_bd, loss_bn):
+        """ lam[0] -> pde loss
+            lam[1] -> bd_loss
+            lam[3] -> bn_loss
+        """
+        losses = [loss_in.detach().numpy(), loss_bd.detach().numpy(), loss_bn.detach().numpy()]
+        # losses = np.array([loss_in, loss_bd, loss_bn], dtype=float)
+        ratio = losses / min(losses)
+        order = np.floor(np.log10(ratio))
+        lam = 10**order
 
-    
-    def training_batch(self, batch_size:int=38, n_boundary_points=4):
-        # " Sample points along the length of the beam "
-        # np.random.seed(42)  ########## Fixed seed for reproducibility
-        # x = np.random.uniform(0, self.L_val, size=(batch_size, 1))
-        # zero_tensor = tf.constant([[0.0]], dtype=tf.float32)        # Shape (1, 1)
-        # lval_tensor = tf.constant([[self.L_val]], dtype=tf.float32) # Shape (1, 1)
-        # x = np.concatenate([zero_tensor, x, lval_tensor], axis=0)
-        # return tf.cast(x, dtype=tf.float32)
-
-        interior_points = batch_size - 2 * n_boundary_points
-        if interior_points < 0:
-            raise ValueError("Batch size is too small for the given number of boundary points. "
-                            "Make sure that batch_size >= 2 * n_boundary_points.")
-        x_interior = np.random.uniform(0, self.L_val, size=(interior_points, 1))
-        x_boundary = np.concatenate([np.zeros((n_boundary_points, 1)), np.ones((n_boundary_points, 1)) * self.L_val], axis=0)
-        return tf.cast(x_interior, dtype=tf.float32), tf.cast(x_boundary, dtype=tf.float32)
-    
-    def validation_batch(self):
-        x, w = self.analytical_solution()
-        x = tf.cast(x.reshape(-1, 1), dtype=tf.float32)
-        w = tf.cast(w.reshape(-1, 1), dtype=tf.float32)
-        return x, w
-    
-    @tf.function
-    def derivatives(self, model:tf.keras.Model, x, training:bool=False):
-        W = model[0](x, training=training)
-        dW_dx = tf.gradients(W, x)[0]
-        dW_dxx = tf.gradients(dW_dx, x)[0]
-        dW_dxxx = tf.gradients(dW_dxx, x)[0]
-        dW_dxxxx = tf.gradients(dW_dxxx, x)[0]
-        return W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx
-
-    @tf.function
-    def calculate_loss(self, model:tf.keras.Model, x_interior, x_boundary, aggregate_boundaries:bool=False, training:bool=False):
-        W_interior, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x_interior, training=training)
-        f_loss_interior = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x_interior/self.L_val) - self.EI_val*dW_dxxxx)**2)
-        W_boundary, _, dW_dxx_boundary, _, dW_dxxxx_boundary = self.derivatives(model, x_boundary, training=training)
-        b1_loss = tf.reduce_mean((W_boundary[0:3])**2)  # At x=0
-        b2_loss = tf.reduce_mean((W_boundary[-4:-1])**2)  # At x=L
-        b3_loss = tf.reduce_mean((dW_dxx_boundary[0:3])**2)  # At x=0
-        b4_loss = tf.reduce_mean((dW_dxx_boundary[-4:-1])**2)  # At x=L
-        total_loss = f_loss_interior + b1_loss + b2_loss + b3_loss + b4_loss
-        return total_loss, f_loss_interior, [b1_loss, b2_loss, b3_loss, b4_loss]
-    # def calculate_loss(self, model:tf.keras.Model, x, aggregate_boundaries:bool=False, training:bool=False):
-        # W, _, dW_dxx, _, dW_dxxxx = self.derivatives(model, x, training=training)
-        # f_loss = tf.reduce_mean(((self.q_0) * tf.math.sin(np.pi*x/self.L_val) - self.EI_val*dW_dxxxx)**2)
-        # xl = tf.cast(x < self.TOL, dtype=tf.float32)
-        # xu = tf.cast(x > self.L_val - self.TOL, dtype=tf.float32)
-        # b1_loss = tf.reduce_mean((xl * W)**2)
-        # b2_loss = tf.reduce_mean((xu * W)**2)
-        # b3_loss = tf.reduce_mean((xl * dW_dxx)**2)
-        # b4_loss = tf.reduce_mean((xu * dW_dxx)**2)
-        # return f_loss, [b1_loss, b2_loss, b3_loss, b4_loss]
+        # Accumulation
+        # lam_in = lam[0]*lam_last[0]
+        # lam_bd = lam[1]*lam_last[1]
+        # lam_bn = lam[2]*lam_last[2]
 
 
-       
-    
-    @tf.function
-    def validation_loss(self, model:tf.keras.Model, x, w):
-        w_pred = model[0](x, training=False)
-        return tf.reduce_mean((w - w_pred)**2)
-    
-    @tf.function
-    def relobralo(self, model, x, args:dict):
-        f_loss, b_losses = self.calculate_loss(model, x, aggregate_boundaries=False, training=True)
+        # No accumulation without conditioning
+        lam_in = lam[0]
+        lam_bd = lam[1]
+        lam_bn = lam[2]
 
-        T = args['T']
-        losses = [f_loss] + b_losses
+        if self.conditioning:
+            # No accumulation with conditioning
+            if max(lam_in, lam_bd, lam_bn) == lam_in:
+                if lam_bn>=lam_bd:
+                    return lam_in, lam_bd, lam_bn
+                else:
+                    lam_in = lam_bn
+            else:
+                if max(lam_in, lam_bd, lam_bn) == lam_bn:
+                    lam_in = lam_bn
+                elif max(lam_in, lam_bd, lam_bn) == lam_bd:
+                    lam_in = lam_bd
+                    lam_bn = lam_bd
 
-        lambs_hat = tf.stop_gradient(tf.nn.softmax([losses[i]/(args['l'+str(i)]*T+1e-12) for i in range(len(losses))])*tf.cast(len(losses), dtype=tf.float32))
-        lambs0_hat = tf.stop_gradient(tf.nn.softmax([losses[i]/(args['l0'+str(i)]*T+1e-12) for i in range(len(losses))])*tf.cast(len(losses), dtype=tf.float32))
-        lambs = [args['rho']*args['alpha']*args['lam'+str(i)] + (1-args['rho'])*args['alpha']*lambs0_hat[i] + (1-args['alpha'])*lambs_hat[i] for i in range(len(losses))]
-        
-        loss = tf.reduce_sum([lambs[i]*losses[i] for i in range(len(losses))])
-        grads = [tf.gradients(loss, model[0].trainable_variables)]
+        return lam_in, lam_bd, lam_bn
 
-        # update args
-        args = args.copy()
-        for i in range(len(b_losses)+1):
-            args['lam'+str(i)] = lambs[i]
-            args['l'+str(i)] = losses[i]
-        return grads, f_loss, b_losses, args
-    
-    @tf.function
-    def manual(self, model, x_interior, x_boundary, args:dict):
-        loss, f_loss, b_losses = self.calculate_loss(model, x_interior, x_boundary, aggregate_boundaries=False, training=True)
-        # loss = args['lam'+str(0)] * f_loss + tf.reduce_sum([args['lam'+str(i+1)] * b_losses[i] for i in range(len(b_losses))])
-        grads = [tf.gradients(loss, model[0].trainable_variables)]
-        args = args.copy()
-        for i, loss_val in enumerate([f_loss] + b_losses):
-            args['l' + str(i)] = loss_val
-        return grads, f_loss, b_losses, args
-    # def manual(self, model, x, args:dict):
-    #     f_loss, b_losses = self.calculate_loss(model, x, aggregate_boundaries=False, training=True)
-    #     loss = args['lam'+str(0)]*f_loss + tf.reduce_sum([args['lam'+str(i+1)]*b_losses[i] for i in range(len(b_losses))])
-    #     grads = [tf.gradients(loss, model[0].trainable_variables)]
-    #     args = args.copy()
-    #     for i, loss in enumerate([f_loss] + b_losses):
-    #         args['l'+str(i)] = loss    
-    #     return grads, f_loss, b_losses, args
+    def train(self):
+        torch.manual_seed(42)
+        layers = [1, 120, 120,  1]
+        self.model = PINN(layers).to(device)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
+        X_in, X_b = self.generate_points(1000)
+        self.loss_vec = []
+        self.lambs_history = []
+        self.epoch_triggered = []
+        lam_in = lam_bd = lam_bn = 1
+        patience   = 4        # epochs without improvement before triggering
+        min_delta  = 0.0        # require at least this absolute improvement
+        bad_epochs = 0
+        best_loss  = float("inf")
 
-    
-    def train(self, nlayers=5, nnodes=360, lr=0.001, epochs=5001, batch_size=1024, resample=True, T=0.1, alpha=0.999, rho=1, patience=4, factor=0.1, capture=1, strategy=True):
-        model = [self.fully_connected(nlayers, nnodes)]
-        # print(model[0].layers[1].get_weights()[0][:5])  # First 5 weights of the first layer
-        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+        best_model = {
+            "score": float("inf"),
+            "state_dict": None,
+            "optim_state": None,
+            "epoch": -1,
+            "triple": None,
+        }
 
-        args = {"lam"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)} 
-        # args.update({"l"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
-        # args.update({"l0"+str(i): tf.constant(1.) for i in range(self.num_b_losses+1)})
-        # args["T"] = tf.constant(T, dtype=tf.float32)
-        # # rho_schedule = (np.random.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
-        # rho_schedule = (self.rng.uniform(size=epochs+1) < rho).astype(int).astype(np.float32)
-        # args['rho'] = tf.constant(rho_schedule[0], dtype=tf.float32)
-        # alpha_schedule = [tf.constant(1., tf.float32), tf.constant(0., tf.float32)] + [tf.constant(alpha, tf.float32)]
-        # args["alpha"] = alpha_schedule[0]
-        alpha = [1.]
-        args.update({"alpha": tf.constant(alpha[0], dtype=tf.float32)})
+        L0_in = L0_bd = L0_bn = None  # Normalisierung
+        print('Start training with epochs: ', self.epochs, ', scheme: ', self.scheme, ' and conditioning: ', self.conditioning)
+        for epoch in range(self.epochs):
 
-        best_loss = 1e9
-        cooldown = patience
-        plateau_count = 0
-        plateau_threshold = 5   # Number of consecutive epochs with minimal improvement to consider a plateau
-        min_delta = 1e-13        # Minimum improvement to consider as progress
+            optimizer.zero_grad()
+            loss_in = self.pde_loss(X_in)
+            loss_bd, loss_bn = self.boundary_loss(X_b)
+            loss = (lam_in)* loss_in + (lam_bd)* loss_bd + (lam_bn)* loss_bn
+            loss.backward()
+            optimizer.step()
+            self.loss_vec.append([loss.item(), loss_in.item(), loss_bd.item(), loss_bn.item()])
+            self.lambs_history.append([lam_in, lam_bd, lam_bn])
 
-        print('Start training of PINN using Tensorflow')
-        start = time()
-        # x = self.training_batch(batch_size)
-        x_interior, x_boundary = self.training_batch(batch_size)
-        lambdas = []
-        losses = []
-        previous_loss = None
-        
+            if epoch % 100 == 0:
 
-        for epoch in range(epochs):
-            if resample:
-                x = self.training_batch(batch_size)
-            # grads, f_loss, b_losses, args = self.manual(model, tf.constant(x, dtype=tf.float32), args)
-            grads, f_loss, b_losses, args = self.manual(model, x_interior, x_boundary, args)
-            optimizer.apply_gradients(zip(grads[0], model[0].trainable_variables))
+                li  = float(loss_in.detach().cpu().item())
+                lbd = float(loss_bd.detach().cpu().item())
+                lbn = float(loss_bn.detach().cpu().item())
 
-            # self.current_losses = [args['l'+str(i)].numpy() for i in range(self.num_b_losses+1)]
-            # if (epoch == 1):
-            #     for i in range(self.num_b_losses+1):
-            #         args['l0'+str(i)] = ([f_loss]+b_losses)[i]
-            # if len(alpha_schedule) > 1:
-            #     args['alpha'] = alpha_schedule[1]
-            #     alpha_schedule = alpha_schedule[1:]
-            # args['rho'] = rho_schedule[1]
-            # rho_schedule = rho_schedule[1:]
+                if L0_in is None:
+                    L0_in, L0_bd, L0_bn = max(li, 1e-30), max(lbd, 1e-30), max(lbn, 1e-30)
+                norm_score = li/L0_in + lbd/L0_bd + lbn/L0_bn
+                if norm_score < best_model["score"] - 1e-12:
+                    best_model.update({
+                        "score": norm_score,
+                        "state_dict": copy.deepcopy(self.model.state_dict()),
+                        "optim_state": copy.deepcopy(optimizer.state_dict()),
+                        "epoch": epoch,
+                        "triple": (li, lbd, lbn),
+                    })
+                    epoch_best_nodel = epoch
+                loss_val = float(loss.detach().cpu().item())
+                if loss_val < best_loss - min_delta:
+                    best_loss = loss_val
+                    bad_epochs = 0
+                else:
+                    bad_epochs += 1
+
+                if (bad_epochs >= patience):
+                    if self.scheme == 'own':
+                        lam_in, lam_bd, lam_bn = self.balancing_scheme(loss_in, loss_bd, loss_bn)
+                    print('Patience triggered, λ_in=',lam_in,', λ_bd=',lam_bd,', λ_bn=',lam_bn)
+                    self.epoch_triggered.append(epoch)
+                    bad_epochs = 0
+                    best_loss  = float("inf")
+                print(f"Epoch {epoch:05d}, L_in: {loss_in.item():.2e} | L_bd: {loss_bd.item():.2e} | L_bn: {loss_bn.item():.2e} | L_tot: {loss.item():.2e}")
+
+        print('Last update of model at epoch: ', epoch_best_nodel, '\n')
 
 
-            if epoch % capture == 0:
-                x_val, w_val = self.validation_batch()
-                val_loss = self.validation_loss(model, x_val, w_val)
-                loss = f_loss + tf.reduce_sum(b_losses)
-                x_boundary_vals = tf.constant([[0.0], [self.L_val/2], [self.L_val]], dtype=tf.float32)
-                W_boundary_vals = model[0](x_boundary_vals, training=False)
-                deflection_at_0 = W_boundary_vals[0].numpy()
-                deflection_at_L_mid = W_boundary_vals[1].numpy()
-                deflection_at_L = W_boundary_vals[2].numpy()
-                print(
-                    f"Epoch {epoch:4d} | "
-                    f"F: {f_loss.numpy():.1e} | "
-                    f"B: {'  '.join(f'{b.numpy():.1e}' for b in b_losses)} | "
-                    f"Val Loss: {val_loss.numpy():.1e} | "
-                    f"W_0: {deflection_at_0.item():.1e} | "
-                    f"W_mid: {deflection_at_L_mid.item():.1e} | "
-                    f"W_L: {deflection_at_L.item():.1e} | "
-                )
+    def plot_save_results(self, path, filename):
+        self.model.cpu()
+        x = torch.linspace(0,10,100).reshape(100,1)
+        u_exact = self.q_0*self.l**4/(np.pi**4*self.EI)*np.sin(np.pi*x/self.l)
+        u_pred = self.model(x).detach().numpy()
+        u_exact = np.array(u_exact, dtype=float)
+        u_exact[-1] = 0
+        u_pred = np.array(u_pred, dtype=float)
+        mask = u_exact != 0
+        mape = np.mean(np.abs((u_exact[mask] - u_pred[mask]) / u_exact[mask])) * 100
 
-                lambdas.append([args[f"lam{i}"].numpy() for i in range(len(b_losses)+1)])
-                losses.append([args[f"l{i}"].numpy() for i in range(len(b_losses)+1)])
 
-                ################################################################################################
-                if (strategy):
-                    if (previous_loss is not None):
-                        improvement = abs(previous_loss - loss.numpy())
-                        if (improvement < min_delta):
-                            plateau_count += 1
-                        else:
-                            plateau_count = 0
+        fig, ax = plt.subplots(1, 3, figsize=(18, 5))
 
-                        if (plateau_count >= plateau_threshold):
-                            self.is_plateau_tf.assign(True)
-                            # plateau_count = 0
-                        else:
-                            self.is_plateau_tf.assign(False)
-                        
 
-                    previous_loss = loss.numpy()
-                ################################################################################################
+        ax[0].plot(x,u_exact, label='exact')
+        ax[0].plot(x,u_pred, label='pred')
+        ax[0].set_title(f'mape: {mape:.2f}%')
+        ax[0].legend()
 
-                if loss < best_loss:
-                    best_loss = loss
-                    cooldown = patience
-                if cooldown <= 0 and epoch > epochs / 10:
-                    cooldown = patience
-                    optimizer.learning_rate.assign(optimizer.learning_rate * factor)
-                cooldown -= 1
-        end = time()
-        print('Training completed. Elapsed time: ',(end-start),'s')
-        
-        x, w = self.validation_batch()
-        W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx = self.derivatives(model, x, training=False)
-        return W, dW_dx, dW_dxx, dW_dxxx, dW_dxxxx, x, w, model, np.array(lambdas), np.array(losses)
+
+        self.loss_vec = np.array(self.loss_vec)
+        loss_to_hist = self.loss_vec[:,0]
+        loss_in_hist = self.loss_vec[:,1]
+        loss_bd_hist = self.loss_vec[:,2]
+        loss_bn_hist = self.loss_vec[:,3]
+        # ax[1].plot(loss_to_hist, label='loss_tot')
+        ax[1].plot(loss_in_hist, label='loss_pde')
+        ax[1].plot(loss_bd_hist, label='loss_bd')
+        ax[1].plot(loss_bn_hist, label='loss_bn')
+        ax[1].vlines(self.epoch_triggered, ymin=min(min(loss_in_hist), min(loss_bd_hist), min(loss_bn_hist)), ymax=1, linestyle='dashed', colors='gray')
+        ax[1].set_yscale('log')
+        ax[1].legend()
+
+        lambs_history  = np.array(self.lambs_history)
+        lam_in_histoty = lambs_history[:,0]
+        lam_bd_histoty = lambs_history[:,1]
+        lam_bn_histoty = lambs_history[:,2]
+        ax[2].plot(lam_in_histoty, label='lam_pde')
+        ax[2].plot(lam_bd_histoty, label='lam_bd')
+        ax[2].plot(lam_bn_histoty, label='lam_bn')
+        if self.scheme == 'own' :
+            ax[2].set_yscale('log')
+        ax[2].legend()
+
+        os.makedirs(path, exist_ok=True)
+        out_path = os.path.join(path, filename)
+        plt.savefig(out_path, dpi=300)
+        plt.close(fig)
+
+

@@ -39,7 +39,7 @@ This is a Physics-Informed Neural Network (PINN) that learns how beams bend unde
 This is where all the heavy lifting happens:
 - Contains the actual neural network that learns the physics
 - Handles the beam physics (that `EI·d⁴w/dx⁴ = 0` stuff)
-- Manages the adaptive loss balancing (ReLoBRaLo magic)
+- Manages the adaptive loss balancing
 - Does all the training logic
 - Basically the "engine" of the whole project
 
@@ -49,16 +49,6 @@ Key things it does:
 - Implements boundary conditions (like fixed ends)
 - Contains the training loop with plateau detection
 
-### `general_utils.py` - The Organizer
-This file takes care of:
-- **Saving results** (numpy arrays of predictions, losses, etc.)
-- **Plotting** (comparisons between predicted and exact solutions)
-- **Loading data** (when you want to analyze results later)
-
-It's useful because:
-- Keeps all your results organized in folders
-- Generates those nice loss curves and comparison plots
-- Lets you replay results without retraining
 
 ### `main.py` - The Controller
 This is where you actually run things:
@@ -68,8 +58,7 @@ This is where you actually run things:
 - Turns plotting on/off
 
 Typical usage:
-```python
-# Set up a 10m beam with 333N load
-run_model(F_val=333.33, L_val=10, EIz_val=111.11e6, 
-          filename="my_beam_results",
-          epochs=5000)
+
+Type on the terminal
+
+python main.py
