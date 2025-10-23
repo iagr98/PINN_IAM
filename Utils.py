@@ -21,8 +21,9 @@ class PINN(nn.Module):
         if add_inverse:
             self.EI_pred = nn.Parameter(torch.tensor(0.5))
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x, t):
+        XT = torch.cat([x, t], dim=1)
+        return self.net(XT)
 
 class Utils:
 
@@ -30,17 +31,21 @@ class Utils:
         self.q_0 = 0.015
         self.l = 10
         self.EI = 20.83
+        self.mu = 1
         self.scheme = scheme
         self.epochs = epochs
         self.inverse = inverse
         self.conditioning = conditioning
 
 
-    def calculate_loss(self, X_in, X_b):
+    def calculate_loss(self, X_in, X_b, t_in, t_b):
 
         # Right-hand side of Bernoulli equation
         def f(x):
             return self.q_0*torch.sin(np.pi*x/self.l)
+        
+        def q(x,t):
+            return self.q_0*torch.sin(np.pi*x/self.l)*torch.sin(np.pi*t)
         
         # Analytical solution
         def u_analytical(x):
@@ -48,27 +53,34 @@ class Utils:
             return self.q_0*self.l**4/(np.pi**4*self.EI)*torch.sin(np.pi*x/self.l)
         
         # PDE residual
-        def pde_loss(X):
+        def pde_loss(X, t):
             X.requires_grad_(True)
-            u = self.model(X)
+            t.requires_grad_(True)
+            u = self.model(X, t)
             u_x = torch.autograd.grad(u, X, grad_outputs=torch.ones_like(u), create_graph=True)[0]
             u_xx = torch.autograd.grad(u_x, X, torch.ones_like(u_x), create_graph=True)[0]
-            u_xxx = torch.autograd.grad(u_xx, X, torch.ones_like(u_x), create_graph=True)[0]
-            u_xxxx = torch.autograd.grad(u_xxx, X, torch.ones_like(u_x), create_graph=True)[0]
-            source = f(X)
+            u_xxx = torch.autograd.grad(u_xx, X, torch.ones_like(u_xx), create_graph=True)[0]
+            u_xxxx = torch.autograd.grad(u_xxx, X, torch.ones_like(u_xxx), create_graph=True)[0]
+            u_t = torch.autograd.grad(u, t, torch.ones_like(u), create_graph=True)[0]
+            u_tt = torch.autograd.grad(u_t, t, torch.ones_like(u_t), create_graph=True)[0]
+            source = q(X,t)
             if self.inverse:
                 return torch.mean((source/self.model.EI_pred-u_xxxx)**2)
             else:
-                return torch.mean((source-u_xxxx*self.EI)**2)
+                return torch.mean((source-u_xxxx*self.EI-u_tt*self.mu)**2)
             
-        def boundary_loss(Xb):
+        def boundary_loss(Xb, t):
                 Xb.requires_grad_(True)
-                u=self.model(Xb)
+                u = self.model(Xb,t)
                 u_x = torch.autograd.grad(u, Xb, grad_outputs=torch.ones_like(u), create_graph=True)[0]
                 u_xx = torch.autograd.grad(u_x, Xb, torch.ones_like(u_x), create_graph=True)[0]
                 loss_D = torch.mean(u**2)
                 loss_N = torch.mean(u_xx**2)
                 return loss_D, loss_N
+        
+        def initial_loss(X,t_0):
+            u = self.model(X,t_0)
+            return torch.mean(u**2)
         
         if self.inverse:
             loss_pde = pde_loss(X_in)
@@ -77,16 +89,19 @@ class Utils:
             return [loss_pde, loss_u]
 
         else:
-            loss_in = pde_loss(X_in)
-            loss_bd, loss_bn = boundary_loss(X_b)
-            return [loss_in, loss_bd, loss_bn]
+            t_0 = torch.zeros_like(X_in)
+            loss_in = pde_loss(X_in, t_in)
+            loss_bd, loss_bn = boundary_loss(X_b, t_b)
+            loss_ic = initial_loss(X_in, t_0)
+            return [loss_in, loss_bd, loss_bn, loss_ic]
 
 
     # Generate collocation and boundary points
-    def generate_points(self, n_interior):
+    def generate_points(self, n_interior, n_time):
         x_in = torch.linspace(0,10,n_interior).reshape(n_interior,1).to(device)
         x_b = torch.tensor([[0],[10]], dtype=torch.float32).to(device)
-        return x_in, x_b
+        t = torch.linspace(0,4,n_time).reshape(n_time,1).to(device)
+        return x_in, x_b, t
     
     def balancing_scheme(self, losses):
         
@@ -169,14 +184,21 @@ class Utils:
 
     def train(self):
         torch.manual_seed(42)
-        layers = [1, 120, 120,  1]
+        layers = [2, 120, 120,  1]
         self.model = PINN(layers, add_inverse=self.inverse).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
-        X_in, X_b = self.generate_points(1000)
+        X_in, X_b, t = self.generate_points(100, 40)
+        # Build full (x,t) meshgrid for interior and boundary points
+        X, T = torch.meshgrid(X_in.squeeze(), t.squeeze(), indexing='ij')
+        X_in = X.reshape(-1, 1)
+        t_in = T.reshape(-1, 1)
+        X, T = torch.meshgrid(X_b.squeeze(), t.squeeze(), indexing='ij')
+        X_b = X.reshape(-1, 1)
+        t_b = T.reshape(-1, 1)
         self.loss_vec = []
         self.lambs_history = []
         self.epoch_triggered = []
-        lambdas = [1, 1, 1]
+        lambdas = [1, 1, 1, 1]
         patience   = 4        # epochs without improvement before triggering
         min_delta  = 0.0        # require at least this absolute improvement
         bad_epochs = 0
@@ -194,14 +216,14 @@ class Utils:
                 losses = torch.tensor([1.0, 1.0], dtype=torch.float32)
             else:
                 losses = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32)
-        L0_in = L0_bd = L0_bn = L0_pde = L0_u = None  # Normalisierung
+        L0_in = L0_bd = L0_bn = L0_ic = L0_pde = L0_u = None  # Normalisierung
         print('Start training with epochs:', self.epochs, ', scheme:', self.scheme, ', conditioning:', self.conditioning, ', Inverse:', self.inverse)
         for epoch in range(self.epochs):
 
             optimizer.zero_grad()
             if (self.scheme=='relobralo'):
                 losses_old = losses
-            losses = self.calculate_loss(X_in, X_b)
+            losses = self.calculate_loss(X_in, X_b, t_in, t_b)
             # losses = [loss_in, loss_bd, loss_bn]
             if (self.scheme=='relobralo'):
                 if (epoch==0):
@@ -210,17 +232,17 @@ class Utils:
             if self.inverse:
                 loss = (lambdas[0])* losses[0] + (lambdas[1])* losses[1]
             else:
-                loss = (lambdas[0])* losses[0] + (lambdas[1])* losses[1] + (lambdas[2])* losses[2]
+                loss = (lambdas[0])* losses[0] + (lambdas[1])* losses[1] + (lambdas[2])* losses[2] + (lambdas[3])* losses[3]
             loss.backward()
             optimizer.step()
             if self.inverse:
                 self.loss_vec.append([loss.item(), losses[0].item(), losses[1].item(), self.model.EI_pred.item()])
                 self.lambs_history.append([lambdas[0], lambdas[1]])
             else:
-                self.loss_vec.append([loss.item(), losses[0].item(), losses[1].item(), losses[2].item()])
-                self.lambs_history.append([lambdas[0], lambdas[1], lambdas[2]])
+                self.loss_vec.append([loss.item(), losses[0].item(), losses[1].item(), losses[2].item(), losses[3].item()])
+                self.lambs_history.append([lambdas[0], lambdas[1], lambdas[2], lambdas[3]])
 
-            if epoch % 100 == 0:
+            if epoch % 10 == 0:
 
                 if self.inverse:
                     l_pde  = float(losses[0].detach().cpu().item())
@@ -229,13 +251,14 @@ class Utils:
                     li  = float(losses[0].detach().cpu().item())
                     lbd = float(losses[1].detach().cpu().item())
                     lbn = float(losses[2].detach().cpu().item())
+                    lic = float(losses[3].detach().cpu().item())
 
                 if (self.inverse==False and L0_in is None) or (self.inverse and L0_pde is None):
                     if self.inverse:
                         L0_pde, L0_u = max(l_pde, 1e-30), max(l_u, 1e-30)
                     else:
-                        L0_in, L0_bd, L0_bn = max(li, 1e-30), max(lbd, 1e-30), max(lbn, 1e-30)
-                norm_score = l_pde/L0_pde + l_u/L0_u if self.inverse else li/L0_in + lbd/L0_bd + lbn/L0_bn
+                        L0_in, L0_bd, L0_bn, L0_ic = max(li, 1e-30), max(lbd, 1e-30), max(lbn, 1e-30), max(lic, 1e-30)
+                norm_score = l_pde/L0_pde + l_u/L0_u if self.inverse else li/L0_in + lbd/L0_bd + lbn/L0_bn + lic/L0_ic
                 if norm_score < best_model["score"] - 1e-12:
                     best_model.update({
                         "score": norm_score,
@@ -265,7 +288,7 @@ class Utils:
                 if (self.inverse):
                     print(f"Epoch {epoch:05d}, L_pde: {losses[0].item():.2e} | L_u: {losses[1].item():.2e} | L_tot: {loss.item():.2e} | EI_pred: {self.model.EI_pred.item()}")
                 else:
-                    print(f"Epoch {epoch:05d}, L_in: {losses[0].item():.2e} | L_bd: {losses[1].item():.2e} | L_bn: {losses[2].item():.2e} | L_tot: {loss.item():.2e}")
+                    print(f"Epoch {epoch:05d}, L_in: {losses[0].item():.2e} | L_bd: {losses[1].item():.2e} | L_bn: {losses[2].item():.2e} | L_ic: {losses[3].item():.2e} | L_tot: {loss.item():.2e}")
 
         print('Last update of model at epoch: ', epoch_best_nodel, '\n')
 
@@ -273,13 +296,13 @@ class Utils:
     def plot_save_results(self, path, filename):
         self.model.cpu()
         x = torch.linspace(0,10,100).reshape(100,1)
-        u_exact = self.q_0*self.l**4/(np.pi**4*self.EI)*np.sin(np.pi*x/self.l)
-        u_pred = self.model(x).detach().numpy()
-        u_exact = np.array(u_exact, dtype=float)
-        u_exact[-1] = 0
+        t = torch.linspace(0,4,40).reshape(40,1)
+        X, T = torch.meshgrid(x.squeeze(), t.squeeze(), indexing='ij')
+        x = X.reshape(-1, 1)
+        t = T.reshape(-1, 1)
+        u_pred = self.model(x,t).detach().numpy()
         u_pred = np.array(u_pred, dtype=float)
-        mask = u_exact != 0
-        mape = np.mean(np.abs((u_exact[mask] - u_pred[mask]) / u_exact[mask])) * 100
+        U_pred = u_pred.reshape(X.shape)
 
 
         
@@ -318,35 +341,41 @@ class Utils:
             ax[3].legend()
 
         else:
-            fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+            fig, ax = plt.subplots(1, 2, figsize=(18, 5))
 
-            ax[0].plot(x,u_exact, label='exact')
-            ax[0].plot(x,u_pred, label='pred')
-            ax[0].set_title(f'mape: {mape:.2f}%')
-            ax[0].legend()
+            # 3D plot for ax[0]
+            ax[0].pcolormesh(X, T, U_pred, cmap='viridis', shading='auto')
+            ax[0].set_title('Predicted Surface')
+            ax[0].set_xlabel('x')
+            ax[0].set_ylabel('t')
+            cbar = fig.colorbar(ax[0].collections[0], ax=ax[0], orientation='vertical', pad=0.02)
+            cbar.set_label('u_pred')
 
             loss_to_hist = self.loss_vec[:,0]
             loss_in_hist = self.loss_vec[:,1]
             loss_bd_hist = self.loss_vec[:,2]
             loss_bn_hist = self.loss_vec[:,3]
-            # ax[1].plot(loss_to_hist, label='loss_tot')
+            loss_ic_hist = self.loss_vec[:,4]
+            ax[1].plot(loss_to_hist, label='loss_tot')
             ax[1].plot(loss_in_hist, label='loss_pde')
             ax[1].plot(loss_bd_hist, label='loss_bd')
             ax[1].plot(loss_bn_hist, label='loss_bn')
+            ax[1].plot(loss_ic_hist, label='loss_ic')
             ax[1].vlines(self.epoch_triggered, ymin=min(min(loss_in_hist), min(loss_bd_hist), min(loss_bn_hist)), ymax=1, linestyle='dashed', colors='gray')
             ax[1].set_yscale('log')
+            ax[1].set_xlabel('Epochs')
             ax[1].legend()
 
-            lambs_history  = np.array(self.lambs_history)
-            lam_in_histoty = lambs_history[:,0]
-            lam_bd_histoty = lambs_history[:,1]
-            lam_bn_histoty = lambs_history[:,2]
-            ax[2].plot(lam_in_histoty, label='lam_pde')
-            ax[2].plot(lam_bd_histoty, label='lam_bd')
-            ax[2].plot(lam_bn_histoty, label='lam_bn')
-            if self.scheme == 'own' :
-                ax[2].set_yscale('log')
-            ax[2].legend()
+            # lambs_history  = np.array(self.lambs_history)
+            # lam_in_histoty = lambs_history[:,0]
+            # lam_bd_histoty = lambs_history[:,1]
+            # lam_bn_histoty = lambs_history[:,2]
+            # ax[2].plot(lam_in_histoty, label='lam_pde')
+            # ax[2].plot(lam_bd_histoty, label='lam_bd')
+            # ax[2].plot(lam_bn_histoty, label='lam_bn')
+            # if self.scheme == 'own' :
+            #     ax[2].set_yscale('log')
+            # ax[2].legend()
 
         os.makedirs(path, exist_ok=True)
         out_path = os.path.join(path, filename)
