@@ -9,7 +9,7 @@ def run_model(epochs, scheme, conditioning, inverse, filename):
 # create an init function that is only run as run from this file
 if __name__ == "__main__":
     
-    epochs = 31
+    epochs = 100001
 
 
     filename = 'dynamic_bernoulli.svg'
