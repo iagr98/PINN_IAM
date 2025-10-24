@@ -68,6 +68,7 @@ function status = myOutputFcn(t,y,flag,x_in)
             figure
             xlabel('x [m]')
             ylabel('Amplitude [m or N/m]')
+            ylim([-q0, q0]);
             deflection = animatedline('Color','b');
             load = animatedline('Color','r');
             legend({'u(x,t) - deflection','q(x,t) - load'})
@@ -80,7 +81,7 @@ function status = myOutputFcn(t,y,flag,x_in)
             addpoints(deflection,x,u)
             clearpoints(load)
             addpoints(load,x,q)
-            drawnow
+            drawnow limitrate
         case 'done'
     end
     status = 0;

@@ -187,7 +187,7 @@ class Utils:
         layers = [2, 120, 120,  1]
         self.model = PINN(layers, add_inverse=self.inverse).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
-        X_in, X_b, t = self.generate_points(100, 40)
+        X_in, X_b, t = self.generate_points(1000, 400)
         # Build full (x,t) meshgrid for interior and boundary points
         X, T = torch.meshgrid(X_in.squeeze(), t.squeeze(), indexing='ij')
         X_in = X.reshape(-1, 1)
