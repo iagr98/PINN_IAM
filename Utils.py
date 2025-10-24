@@ -242,7 +242,7 @@ class Utils:
                 self.loss_vec.append([loss.item(), losses[0].item(), losses[1].item(), losses[2].item(), losses[3].item()])
                 self.lambs_history.append([lambdas[0], lambdas[1], lambdas[2], lambdas[3]])
 
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
 
                 if self.inverse:
                     l_pde  = float(losses[0].detach().cpu().item())
